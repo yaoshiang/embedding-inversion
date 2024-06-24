@@ -31,15 +31,15 @@ def test_forward_pass():
     vocab_size = 30000
     trainable_tokens = TrainableTokenSequence(batch_size, sequence_length, vocab_size, 0.5)
 
-    # Forward pass
+    # Forward pass. Returns log probabilities.
     output = trainable_tokens.forward()
 
     # Check output shape and type
     assert output.shape == (batch_size, sequence_length, vocab_size)
-    sum_probs = output.sum(dim=-1)
-    print(sum_probs, sum_probs.shape, sum_probs.dtype)
+    sum_probs = torch.exp(output).sum(dim=-1)
+    # print(sum_probs, sum_probs.shape, sum_probs.dtype)
     ones = torch.ones_like(sum_probs)
-    print(ones, ones.shape, ones.dtype)
+    # print(ones, ones.shape, ones.dtype)
     assert torch.allclose(
         sum_probs, ones, atol=1e-5
     ), f"Output probabilities should sum to 1 across vocab dimension: {output.sum(dim=-1)}"

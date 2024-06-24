@@ -14,7 +14,7 @@ class TrainableTokenSequence(torch.nn.Module):
     The final tokens, if any, are always [PAD] or 0.
     """
 
-    def __init__(self, batch_size, sequence_length, vocab_size, dropout):
+    def __init__(self, batch_size, sequence_length, vocab_size, depth, dropout):
         """Initialize the TrainableTokenSequence class.
 
         The batch_size arg must be even. Half the batch_size is used for queries and the other half for passages.
@@ -24,6 +24,8 @@ class TrainableTokenSequence(torch.nn.Module):
             batch_size (int): The batch size.
             sequence_length (int): The sequence length.
             vocab_size (int): The size of the vocabulary.
+            depth (int): The additional dimension of the token logits. This aids in stochasticity for dropout.
+            dropout (float): The dropout rate.
 
         """
         if batch_size % 2 != 0:
@@ -32,6 +34,7 @@ class TrainableTokenSequence(torch.nn.Module):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
         self.vocab_size = vocab_size
+        self.depth = depth
 
         super().__init__()
         # self.tokens = F.one_hot(torch.arange(vocab_size)
@@ -66,25 +69,22 @@ class TrainableTokenSequence(torch.nn.Module):
         # self.register_buffer('arange', arange)
 
         shape = (batch_size, sequence_length - 5, vocab_size)
-        # token_logits = torch.normal(torch.zeros(*shape), torch.ones(*shape))
-        # token_logits = torch.normal(torch.zeros(*shape + (2,)), torch.ones(*shape + (2,)))
-        token_logits = torch.ones(*shape + (1,)) # Final dim will be reduce summed. 
+        token_logits = torch.normal(torch.zeros(*shape + (self.depth,)), torch.ones(*shape + (self.depth,)))
+        # token_logits = torch.ones(*shape + (self.depth,))  # Final dim will be reduce summed.
         token_logits.requires_grad_(True)
         self.token_logits = torch.nn.Parameter(token_logits)
 
         # self.sep_inflection_point = torch.nn.Parameter(torch.Tensor([batch_size, 0.0]))
 
         self.dropout = torch.nn.Dropout(p=dropout)
-        self.softmax = torch.nn.Softmax(dim=-1)
-        # self.softmax = torch.nn.Sigmoid()
 
     def forward(self) -> torch.Tensor:
         """Forward pass.
 
         Returns:
             torch.Tensor: A tensor of shape (batch_size, sequence_length, vocab_size)
-            containing the one-hot representation of trainable "input" tokens to
-            a sequence model.
+            containing the log-prob of the one-hot representation of
+            trainable "input" tokens to a sequence model.
         """
         # print('cls', self.cls.shape, self.cls.device)
         # print('colon', self.colon.shape)
@@ -143,7 +143,7 @@ class TrainableTokenSequence(torch.nn.Module):
 
         # print('pred', pred.shape, pred.device)
 
-        pred = self.softmax(pred)
+        pred = F.log_softmax(pred, -1)
 
         # pred = pred / torch.sum(pred, dim=-1, keepdim=True)
 

@@ -2,7 +2,7 @@ import torch
 from transformers import AutoModel, AutoTokenizer, BertModel
 
 from .e5_utils import run_e5, run_one_hot_e5
-from .modeling_sparse_e5 import SparseBertEmbeddings, SparseE5
+from .modeling_dense_e5 import DenseBertEmbeddings, DenseE5
 
 
 def test_one_hot_bert_embeddings_initialization():  # noqa: D103
@@ -15,7 +15,7 @@ def test_one_hot_bert_embeddings_initialization():  # noqa: D103
     # ---Act---
 
     # Instantiate custom embeddings class
-    one_hot_bert_embeddings = SparseBertEmbeddings(bert_embeddings)
+    one_hot_bert_embeddings = DenseBertEmbeddings(bert_embeddings)
 
     # ---Assert---
 
@@ -58,7 +58,7 @@ def test_sparse_bert_embeddings_forward_pass():
     expected = bert_embedding(input_ids).detach()
 
     # Instantiate custom embeddings class
-    one_hot_bert_embeddings = SparseBertEmbeddings(bert_embedding)
+    one_hot_bert_embeddings = DenseBertEmbeddings(bert_embedding)
 
     # Convert token IDs to one-hot representations for your custom embeddings
     one_hot_vectors = torch.nn.functional.one_hot(input_ids, num_classes=tokenizer.vocab_size).float()
@@ -101,7 +101,7 @@ def test_sparse_e5():
 
     # Act
     embs, _ = run_e5(e5, input_texts)
-    one_hot_embs, _ = run_one_hot_e5(SparseE5(e5), input_texts)
+    one_hot_embs, _ = run_one_hot_e5(DenseE5(e5), input_texts)
 
     # Assert
     assert torch.allclose(embs, one_hot_embs, atol=1e-4), "Embeddings mismatch"

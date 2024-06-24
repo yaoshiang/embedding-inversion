@@ -1,8 +1,7 @@
-import torch.nn.functional as F  # noqa: I001
+import torch
+import torch.nn.functional as F  # noqa: N812
 
 from . import masked_lm_regularizer
-
-import torch
 
 
 def test_default_args():
@@ -10,7 +9,6 @@ def test_default_args():
     reg = masked_lm_regularizer.MaskedLMRegularizer(device=masked_lm_regularizer.DEVICE)
 
     # Assert
-    assert reg.mask_prob == 0.15
     assert reg.tokenizer is not None
     assert reg.model is not None
 
@@ -18,7 +16,7 @@ def test_default_args():
 def phrase_to_logprobs(phrase: str, reg: masked_lm_regularizer.MaskedLMRegularizer):
     ids = reg.tokenizer([phrase], return_tensors="pt").to(masked_lm_regularizer.DEVICE)
     hots = F.one_hot(ids["input_ids"], num_classes=reg.tokenizer.vocab_size).float()
-    clipped = torch.clamp(hots, 0.0001, 0.9999)
+    clipped = torch.clamp(hots, 0.000001, 0.999999)
     logits = torch.log(clipped)
 
     log_probs = F.log_softmax(logits, dim=-1)
@@ -29,27 +27,29 @@ def test_unlikely_phrase():
     # Arrange
     reg = masked_lm_regularizer.MaskedLMRegularizer(device=masked_lm_regularizer.DEVICE)
 
-    common_phrases = [
-        "I am a person",
-    ]
-    weird_phrases = [
-        "fielder fluttering + space",
+    test_cases = [
+        ("I love you.", "I love r."),
+        ("I love you.", "you. love I"),
+        ("The third baseman caught the ball.", "The third baseman caught the pow."),
+        ("The third baseman caught the ball.", "caught ball the. The third baseman"),
+        ("A cat is a mammal.", "a cat is a +."),
+        ("A cat is a mammal.", "cat mammal is a."),
+        ("You can see.", "You see minus."),
+        ("You can see.", "You see can."),
     ]
 
-    for common, weird in zip(common_phrases, weird_phrases):
-        common_logprobs = phrase_to_logprobs(common, reg)
-        common_loss = reg(
-            common_logprobs,
-            log_probs=True,
-            generator=torch.Generator(device=masked_lm_regularizer.DEVICE).manual_seed(42),
-        )
-        weird_logprobs = phrase_to_logprobs(weird, reg)
-        weird_loss = reg(
-            weird_logprobs,
-            log_probs=True,
-            generator=torch.Generator(device=masked_lm_regularizer.DEVICE).manual_seed(42),
-        )
-
-        assert (
-            weird_loss > common_loss
-        ), f"Expected {weird} {weird_loss} to have higher loss than {common} {common_loss}."
+    for normal, unusual in test_cases:
+        for loss_type in ["kl_div", "l1"]:
+            normal_logprobs = phrase_to_logprobs(normal, reg)
+            normal_loss = reg(
+                normal_logprobs,
+                loss_type=loss_type,
+            )
+            unusual_logprobs = phrase_to_logprobs(unusual, reg)
+            unusual_loss = reg(
+                unusual_logprobs,
+                loss_type=loss_type,
+            )
+            assert (
+                unusual_loss > normal_loss
+            ), f"Expected {unusual} {unusual_loss} to have higher loss than {normal} {normal_loss}."

@@ -1,0 +1,5 @@
+Deep Dreams on NLP Embedding Models
+
+Abstract
+
+Embedding models take sequences of text as input and reduce the dimensionality to a much smaller vector with the attribute that similar 

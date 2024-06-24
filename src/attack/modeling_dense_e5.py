@@ -28,15 +28,15 @@ import torch
 import transformers
 from torch import nn
 
-from .sparse_embedding import SparseEmbedding
+from .dense_embedding import DenseEmbedding
 
 
-class SparseBertEmbeddings(nn.Module):
-    """Sparse variation of BertEmbeddings layer.
+class DenseBertEmbeddings(nn.Module):
+    """Dense variation of BertEmbeddings layer.
 
     Includes word, position and token_type embeddings. Takes the weights from
     an existing BertEmbeddings layer and replaces the word embeddings with a
-    sparse embedding layer. Reuses the position and type embeddings.
+    Dense embedding layer. Reuses the position and type embeddings.
 
     Args:
         bert_embeddings (transformers.models.bert.modeling_bert.BertEmbeddings):
@@ -45,7 +45,7 @@ class SparseBertEmbeddings(nn.Module):
 
     def __init__(self, bert_embeddings: transformers.models.bert.modeling_bert.BertEmbeddings):
         super().__init__()
-        self.word_embeddings = SparseEmbedding(bert_embeddings.word_embeddings)
+        self.word_embeddings = DenseEmbedding(bert_embeddings.word_embeddings)
         self.position_embeddings = bert_embeddings.position_embeddings
         self.token_type_embeddings = bert_embeddings.token_type_embeddings
 
@@ -65,7 +65,7 @@ class SparseBertEmbeddings(nn.Module):
 
     def forward(
         self,
-        input_ids: Optional[torch.float32] = None,
+        input_ids: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         # inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -110,12 +110,12 @@ class SparseBertEmbeddings(nn.Module):
         return embeddings
 
 
-class SparseE5PreTrainedModel(transformers.modeling_utils.PreTrainedModel):
+class DenseE5PreTrainedModel(transformers.modeling_utils.PreTrainedModel):
     pass
 
 
 # Adapted from https://github.com/huggingface/transformers/tree/main/src/transformers/models/bert
-class SparseE5(SparseE5PreTrainedModel):
+class DenseE5(DenseE5PreTrainedModel):
     """Wraps a pre-trained BertModel.
 
     Takes an existing pretrained E5 model (an instance of BertModel)
@@ -139,7 +139,7 @@ class SparseE5(SparseE5PreTrainedModel):
 
         self.config = model.config
 
-        self.embeddings = SparseBertEmbeddings(model.embeddings)
+        self.embeddings = DenseBertEmbeddings(model.embeddings)
         self.encoder = model.encoder
 
         self.pooler = (

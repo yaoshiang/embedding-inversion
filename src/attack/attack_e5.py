@@ -1,18 +1,16 @@
 """This script runs deep dreams / adversarial attack on an E5 model."""
 
-import typing
 from pprint import pprint
+from typing import Dict, Tuple
 
-import e5_utils
 import torch
 import transformers
 from torch.nn import functional as F  # noqa: N812
 from transformers import AutoModel, AutoTokenizer
 
-from .modeling_sparse_e5 import SparseE5
+from . import e5_utils, masked_lm_regularizer
+from .modeling_dense_e5 import DenseE5
 from .trainable_token_sequence import TrainableTokenSequence
-
-x = typing
 
 
 # Check for device availability
@@ -31,7 +29,7 @@ DEVICE = get_device()
 print("Using device:", DEVICE)
 
 
-def create_sample_dataset() -> torch.Tensor:
+def create_sample_dataset() -> Tuple[torch.Tensor, Dict]:
     """Creates a sample dataset for testing.
 
     Returns:
@@ -68,10 +66,10 @@ def create_sample_dataset() -> torch.Tensor:
     assert embeddings.dim() == 2, embeddings.dim()
     assert embeddings.shape[1] <= model.config.max_position_embeddings
 
-    return embeddings, batch_dict
+    return (embeddings, batch_dict)
 
 
-def create_batch_dict(input_ids: list[list[int]]):
+def create_batch_dict(input_ids: torch.Tensor):
     """Creates a batch_dict to match a set of input_ids.
 
     Args:
@@ -120,39 +118,40 @@ def prepare_tensors(batch_dict: dict) -> dict[str, torch.Tensor]:
 def attack_e5_small(embeddings: torch.Tensor, reference_batch_dict: dict) -> None:
     """Attacks an instance of an E5 pretrained model."""
 
+    # Copied from the documentation.
     def average_pool(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
         return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
 
-    batch_size = embeddings.size(0)
-    print("batch_size:", batch_size)
+    B = embeddings.size(0)  # noqa: N806
+    print("batch_size:", B)
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained("intfloat/e5-small")
 
     # Create one_hot version of e5 model.
     original_model = transformers.AutoModel.from_pretrained("intfloat/e5-small")
     assert isinstance(original_model, transformers.models.bert.modeling_bert.BertModel)
-    model = SparseE5(original_model).to(DEVICE)  # These weights will not be updated.
+    model = DenseE5(original_model).to(DEVICE)  # These weights will not be updated.
     del original_model
 
     # Create an "input" tensor that will be backpropped into.
     # If there are 2 input texts, we will create 4 "input" tokens:
     # 2 for the query and 2 for the passage.
-    seq = TrainableTokenSequence(
-        batch_size=batch_size * 2,
+    seq_layer = TrainableTokenSequence(
+        batch_size=B * 2,
         # sequence_length=model.config.max_position_embeddings,
         sequence_length=16,
         vocab_size=model.config.vocab_size,
-        dropout=0.4,
+        depth=4,
+        dropout=0.0,
     )
+    seq_layer = seq_layer.to(DEVICE)
 
     # Tile the embeddings by 2x to account for the query and passage.
     embeddings = torch.tile(embeddings, (2, 1))
     embeddings = embeddings.to(DEVICE).detach()
 
-    seq = seq.to(DEVICE)
-
-    optimizer = torch.optim.AdamW(seq.parameters(), lr=0.3)
+    optimizer = torch.optim.AdamW(seq_layer.parameters(), lr=0.3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.1, patience=1000, verbose=True
     )
@@ -160,23 +159,22 @@ def attack_e5_small(embeddings: torch.Tensor, reference_batch_dict: dict) -> Non
     # When we already have the target tokens to generate the target embedding,
     # we want a cosine similarity of 1.0 between the target and the output of the model.
     # The NCE loss reduces to negative cosine similarity for the positive pairs. No logs.
-
     cosine_embedding_loss = torch.nn.CosineEmbeddingLoss()
+
+    # We regularize with the masked language model loss.
+    reg = masked_lm_regularizer.MaskedLMRegularizer(DEVICE)
 
     def criterion(output, target):
         return cosine_embedding_loss(output, target, torch.Tensor([1]).to(DEVICE))
 
-    epochs = 10000
+    epochs = 1000
 
     for epoch in range(epochs):
-        optimizer.zero_grad()
+        seq_layer.train()
+        seq = seq_layer.forward()  # BSV, logprobs space
+        batch_dict = create_batch_dict(torch.exp(seq))  # BSV, probs space
 
-        seq.train()
-        input_ids = seq.forward()  # BSV: we got the one hots.
-
-        batch_dict = create_batch_dict(input_ids)
-
-        batch_dict = prepare_tensors(batch_dict)  # Convert to tensors.
+        batch_dict = prepare_tensors(batch_dict)
         outputs = model(**batch_dict)
 
         pred = average_pool(outputs.last_hidden_state, batch_dict["attention_mask"])
@@ -185,28 +183,32 @@ def attack_e5_small(embeddings: torch.Tensor, reference_batch_dict: dict) -> Non
         pred = F.normalize(pred, p=2, dim=1)
 
         loss = criterion(pred, embeddings)
+
+        if 200 < epoch < 400:
+            seq_layer.dropout.p = 0.1
+            reg_loss = 0.1 * reg(seq, loss_type="smooth_l1")
+            loss = loss + reg_loss
+        elif 400 < epoch < 600:
+            seq_layer.dropout.p = 0.1
+            reg_loss = 0.1 * reg(seq, loss_type="smooth_l1")
+            loss = loss + reg_loss
+        else:
+            seq_layer.dropout.p = 0.00
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         scheduler.step(loss)
-
-        if epoch % 100 == 0:
-            seq.eval()
-            token_probs = seq.forward()
-
-            strings = tokenizer.batch_decode(token_probs.argmax(dim=2).tolist())
-            for idx, string in enumerate(strings):
-                if idx % 3 == 0:
-                    print()
-                print(string)
-            for idx, prob in enumerate(token_probs):
-                if idx % 3 == 0:
-                    print()
-                print(prob.topk(1))
 
         if epoch == 0:
             pprint(reference_batch_dict["input_ids"])
             strings = tokenizer.batch_decode(reference_batch_dict["input_ids"])
             for string in strings:
+                print(string)
+
+        if epoch % 100 == 0:
+            strings = tokenizer.batch_decode(seq.argmax(dim=2).tolist())
+            for idx, string in enumerate(strings):
+                print()
                 print(string)
 
         if epoch % 10 == 0:

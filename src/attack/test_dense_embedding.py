@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from transformers import AutoTokenizer
 
-from .sparse_embedding import SparseEmbedding
+from .dense_embedding import DenseEmbedding
 
 
 def test_one_hot_embedding_equivalence():  # noqa: D103
@@ -17,7 +17,7 @@ def test_one_hot_embedding_equivalence():  # noqa: D103
     pretrained_embedding.weight.data.normal_()
 
     # Instantiate the custom OneHotEmbedding layer
-    custom_embedding = SparseEmbedding(pretrained_embedding)
+    custom_embedding = DenseEmbedding(pretrained_embedding)
 
     # Define a sample input text
     input_texts = ["query: how much protein should a female eat", "query: summit define"]

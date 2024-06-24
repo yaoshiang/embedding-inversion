@@ -3,12 +3,12 @@
 
 from typing import List, Tuple
 
-import torch.nn.functional as F  # noqa: F812
+import torch.nn.functional as F  # noqa: N812
 import transformers
 from torch import Tensor
 from transformers import AutoTokenizer
 
-from .modeling_sparse_e5 import SparseE5
+from .modeling_dense_e5 import DenseE5
 
 
 def run_e5(model: transformers.models.bert.modeling_bert.BertModel, input_texts: List[str]) -> Tuple[Tensor, dict]:
@@ -45,7 +45,7 @@ def run_e5(model: transformers.models.bert.modeling_bert.BertModel, input_texts:
     return embeddings, batch_dict
 
 
-def run_one_hot_e5(model: SparseE5, input_texts: List[str]) -> Tuple[Tensor, dict]:
+def run_one_hot_e5(model: DenseE5, input_texts: List[str]) -> Tuple[Tensor, dict]:
     """Run the model on a list of input texts.
 
     Adapted from the snippet at https://huggingface.co/intfloat/e5-small.
@@ -58,7 +58,7 @@ def run_one_hot_e5(model: SparseE5, input_texts: List[str]) -> Tuple[Tensor, dic
     Returns:
         List[Tensor]: A list of tensors containing the embeddings of the input texts.
     """
-    assert isinstance(model, SparseE5)
+    assert isinstance(model, DenseE5)
     assert input_texts
 
     def average_pool(last_hidden_states: Tensor, attention_mask: Tensor) -> Tensor:

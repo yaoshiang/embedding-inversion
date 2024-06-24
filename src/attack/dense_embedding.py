@@ -4,10 +4,10 @@ import torch
 from torch import nn
 
 
-class SparseEmbedding(nn.Module):
+class DenseEmbedding(nn.Module):
     """Differentiable version of torch.nn.Embedding.
 
-    This version takes one-hot encoded inputs and returns the corresponding embeddings.
+    This version takes dense encoded inputs (such as one-hots) and returns the corresponding embeddings.
     This is useful when you want to backprop through the embedding layer to learn the underlying words.
     """
 
@@ -24,17 +24,19 @@ class SparseEmbedding(nn.Module):
         self.embedding = pretrained_embedding_layer
         self.embedding.weight.requires_grad = False  # Freeze the embedding weights
 
-    def forward(self, one_hot_vectors):
+    def forward(self, dense_vectors):
         """Forward pass.
 
         Args:
-            one_hot_vectors (torch.Tensor): A tensor of shape (batch_size, sequence_length, vocab_size) containing one-hot encoded vectors.
+            dense_vectors (torch.Tensor): A tensor of shape (batch_size, sequence_length, vocab_size) containing one-hot or probability distributions of the vocab.
 
         Returns:
-            torch.Tensor: A tensor of shape (batch_size, sequence_length, embedding_dim) containing the embeddings of the input one-hot vectors.
+            torch.Tensor: A tensor of shape (batch_size, sequence_length, embedding_dim) containing the embeddings of the inputs.
         """
         # Validate that each one-hot vector is a probability distribution
-        assert torch.allclose(one_hot_vectors.sum(dim=-1), torch.ones_like(one_hot_vectors.sum(dim=-1)))
+        assert torch.allclose(
+            dense_vectors.sum(dim=-1), torch.ones_like(dense_vectors.sum(dim=-1))
+        ), f"Input one-hot vectors must sum to 1. Got {dense_vectors.sum(dim=-1)}."
 
-        embedded = torch.matmul(one_hot_vectors, self.embedding.weight)
+        embedded = torch.matmul(dense_vectors, self.embedding.weight)
         return embedded
