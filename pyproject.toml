@@ -26,6 +26,9 @@ pydocstyle.convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402", "F401", "F403", "F811"]
 
+# Ignore docstrings in unit tests
+"test_*.py" = ["D"]
+
 [tool.ruff.format]
 # Like Black, use double quotes for strings.
 quote-style = "double"
@@ -44,3 +47,4 @@ profile = "black"
 lines_after_imports = 2
 
 application-import-names = ["attack"]
+

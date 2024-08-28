@@ -115,7 +115,7 @@ def prepare_tensors(batch_dict: dict) -> dict[str, torch.Tensor]:
     return batch_dict
 
 
-def attack_e5_small(embeddings: torch.Tensor, reference_batch_dict: dict) -> None:
+def attack_e5_small(embeddings: torch.Tensor, reference_batch_dict: dict) -> list[str]:
     """Attacks an instance of an E5 pretrained model."""
 
     # Copied from the documentation.
@@ -129,26 +129,25 @@ def attack_e5_small(embeddings: torch.Tensor, reference_batch_dict: dict) -> Non
     tokenizer = AutoTokenizer.from_pretrained("intfloat/e5-small")
 
     # Create one_hot version of e5 model.
-    original_model = transformers.AutoModel.from_pretrained("intfloat/e5-small")
+    # Default is SDPA (scaled dot product attention), does not work with this script.
+    # See Pytorch specific parameters at https://huggingface.co/docs/transformers/v4.36.1/en/main_classes/configuration
+    original_model = transformers.AutoModel.from_pretrained("intfloat/e5-small", attn_implementation="eager")
     assert isinstance(original_model, transformers.models.bert.modeling_bert.BertModel)
     model = DenseE5(original_model).to(DEVICE)  # These weights will not be updated.
     del original_model
 
     # Create an "input" tensor that will be backpropped into.
-    # If there are 2 input texts, we will create 4 "input" tokens:
-    # 2 for the query and 2 for the passage.
     seq_layer = TrainableTokenSequence(
-        batch_size=B * 2,
+        batch_size=B,
         # sequence_length=model.config.max_position_embeddings,
-        sequence_length=16,
+        # sequence_length=16,
+        sequence_length=64,
         vocab_size=model.config.vocab_size,
         depth=4,
         dropout=0.0,
     )
     seq_layer = seq_layer.to(DEVICE)
 
-    # Tile the embeddings by 2x to account for the query and passage.
-    embeddings = torch.tile(embeddings, (2, 1))
     embeddings = embeddings.to(DEVICE).detach()
 
     optimizer = torch.optim.AdamW(seq_layer.parameters(), lr=0.3)
@@ -213,6 +212,9 @@ def attack_e5_small(embeddings: torch.Tensor, reference_batch_dict: dict) -> Non
 
         if epoch % 10 == 0:
             print(f"Epoch {epoch}: Loss: {loss.item()} LR: {optimizer.param_groups[0]['lr']}")
+
+    predictions = tokenizer.batch_decode(seq.argmax(dim=2).tolist())
+    return predictions
 
 
 if __name__ == "__main__":

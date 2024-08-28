@@ -153,7 +153,7 @@ class MaskedLMRegularizer:
             loss_type (str): The type of loss to use. Either 'kl_div' or 'abs_diff'.
                 'kl_div' calculates the KL divergence between the predicted and actual token distributions, which
                 is appropriate when the loss function is crossentropy.
-                'abs_diff' calculates the L1 loss between the predicted and actual token distributions, which
+                'smooth_l1' calculates the L1 loss between the predicted and actual token distributions, which
                 is appropriate when the loss function applies is a cosine distance.
 
         Returns:

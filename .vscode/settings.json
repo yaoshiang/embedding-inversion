@@ -6,8 +6,7 @@
         }
     },
     "ruff.lint.args": [
-        "--config=~/Documents/GitHub/embedding-inversion/pyproject.toml",
-        // "--config=./pyproject.toml",
+        "--config=./pyproject.toml",
     ],
     "ruff.organizeImports": true,
     "ruff.fixAll": true,

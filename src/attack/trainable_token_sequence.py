@@ -140,12 +140,7 @@ class TrainableTokenSequence(torch.nn.Module):
         token_logits = torch.sum(token_logits, dim=-1)
 
         pred = torch.cat([prefix, token_logits, postfix], dim=1)
-
-        # print('pred', pred.shape, pred.device)
-
         pred = F.log_softmax(pred, -1)
-
-        # pred = pred / torch.sum(pred, dim=-1, keepdim=True)
 
         assert pred.shape == (self.batch_size, self.sequence_length, self.vocab_size), pred.shape
         return pred

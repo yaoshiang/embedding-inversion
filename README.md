@@ -1,16 +1,26 @@
 # embedding-inversion
 
+This repo shows how to run DeepDreams style attacks on 
+an embedding model to attempt to recover input strings.
+
+We study the Microsoft E5 model given it is based on the
+well understood BERT model. 
+
 https://www.microsoft.com/en-us/research/publication/text-embeddings-by-weakly-supervised-contrastive-pre-training/
 
-## python src/bert_priors.py
+## python tools/print_model.py
 
-This script runs BERT with masks to probe it's priors. 
+This script prints intermediate datastructure from BERT. 
 
-## python src/attack_e5.py
+## python src/tools/bert_priors.py
 
-This script runs the deep dream on BERT. Key hyperparameters are spread 
+This script runs BERT with masks to probe its priors. 
 
-## python src/distilbert.py
+## python src/tools/distilbert.py
 
 This script outputs multiple intermediate datastructures from DistilBERT and it's tokenizers.
 
+## Attack script
+
+pip install -e .
+python -m attack

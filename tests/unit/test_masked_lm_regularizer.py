@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F  # noqa: N812
 
-from . import masked_lm_regularizer
+from attack import masked_lm_regularizer
 
 
 def test_default_args():
@@ -35,11 +35,11 @@ def test_unlikely_phrase():
         ("A cat is a mammal.", "a cat is a +."),
         ("A cat is a mammal.", "cat mammal is a."),
         ("You can see.", "You see minus."),
-        ("You can see.", "You see can."),
+        ("You can see.", "see can You."),
     ]
 
     for normal, unusual in test_cases:
-        for loss_type in ["kl_div", "l1"]:
+        for loss_type in ["kl_div", "smooth_l1"]:
             normal_logprobs = phrase_to_logprobs(normal, reg)
             normal_loss = reg(
                 normal_logprobs,

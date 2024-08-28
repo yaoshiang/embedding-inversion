@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from transformers import AutoTokenizer
 
-from .dense_embedding import DenseEmbedding
+from attack.dense_embedding import DenseEmbedding
 
 
 def test_one_hot_embedding_equivalence():  # noqa: D103

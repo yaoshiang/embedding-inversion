@@ -1,8 +1,8 @@
 import torch
 from transformers import AutoModel, AutoTokenizer, BertModel
 
-from .e5_utils import run_e5, run_one_hot_e5
-from .modeling_dense_e5 import DenseBertEmbeddings, DenseE5
+from attack.e5_utils import run_e5, run_one_hot_e5
+from attack.modeling_dense_e5 import DenseBertEmbeddings, DenseE5
 
 
 def test_one_hot_bert_embeddings_initialization():  # noqa: D103
