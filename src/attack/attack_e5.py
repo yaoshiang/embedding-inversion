@@ -29,45 +29,6 @@ DEVICE = get_device()
 print("Using device:", DEVICE)
 
 
-def create_sample_dataset() -> Tuple[torch.Tensor, Dict]:
-    """Creates a sample dataset for testing.
-
-    Returns:
-        List[torch.Tensor]: A list of input texts.
-    """
-    # input_texts = [
-    #     'query: how much protein should a female eat',
-    #     'query: summit define',
-    #     ("passage: As a general guideline, the CDC's average requirement of "
-    #      "protein for women ages 19 to 70 is 46 grams per day. But, as you "
-    #      "can see from this chart, you'll need to increase that if you're "
-    #      "expecting or training for a marathon. Check out the chart below to "
-    #      "see how much protein you should be eating each day."),
-    #     ("passage: Definition of summit for English Language Learners. : "
-    #      "1  the highest point of a mountain : the top of a mountain. : "
-    #      "2  the highest level. : 3  a meeting or series of meetings between "
-    #      "the leaders of two or more governments."),
-    # ]
-
-    input_texts = [
-        "query: What is interesting about the city of Seattle?",
-        "query: What are some of the elements of the periodic table?",
-        "query: What wars were fought in the 20th century?",
-        "passage: SAP is a software company.",
-        "passage: ABAP is a programming language.",
-        "passage: SuccessFactors is a human capital management company owned by SAP.",
-    ]
-
-    model = AutoModel.from_pretrained("intfloat/e5-small")
-
-    embeddings, batch_dict = e5_utils.run_e5(model, input_texts)  # BSV
-
-    assert isinstance(embeddings, torch.Tensor)
-    assert embeddings.dim() == 2, embeddings.dim()
-    assert embeddings.shape[1] <= model.config.max_position_embeddings
-
-    return (embeddings, batch_dict)
-
 
 def create_batch_dict(input_ids: torch.Tensor):
     """Creates a batch_dict to match a set of input_ids.
