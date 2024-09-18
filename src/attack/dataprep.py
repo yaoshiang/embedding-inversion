@@ -200,7 +200,10 @@ def create_hotpotqa_dataset_for_e5(max_examples: int) -> Tuple[torch.Tensor, Dic
         Tuple[torch.Tensor, Dict]: A tuple containing the embeddings and batch dict,
         which are the output of the tokenizer (token_id, padding, etc).
     """
-    ds = datasets.load_dataset("hotpotqa/hotpot_qa", name="distractor", split="validation")
+    if max_examples <= 0 or max_examples > _VAL_ROWS * 10:
+        raise ValueError(f"max_examples must be between 1 and {_VAL_ROWS * 10}.")
+
+    ds:datasets.Dataset = datasets.load_dataset("hotpotqa/hotpot_qa", name="distractor", split="validation")
     check_hotpotqa(ds)
 
     texts = []
@@ -214,8 +217,8 @@ def create_hotpotqa_dataset_for_e5(max_examples: int) -> Tuple[torch.Tensor, Dic
             texts.append(f"passage: {''.join(sentences)}")
             if len(texts) >= max_examples:
                 break
-
-    assert _VAL_ROWS * 9 < len(texts) < _VAL_ROWS * 10
+    else: # No break
+        assert _max_examples * 8 < len(texts) < _VAL_ROWS * 10, len(texts)
 
     model = AutoModel.from_pretrained("intfloat/e5-small")
 
