@@ -1,14 +1,13 @@
 """This script runs deep dreams / adversarial attack on an E5 model."""
 
 from pprint import pprint
-from typing import Dict, Tuple
 
 import torch
 import transformers
 from torch.nn import functional as F  # noqa: N812
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoTokenizer
 
-from . import e5_utils, masked_lm_regularizer
+from . import masked_lm_regularizer
 from .modeling_dense_e5 import DenseE5
 from .trainable_token_sequence import TrainableTokenSequence
 
@@ -27,7 +26,6 @@ def get_device() -> torch.device:
 # Set the device based on availability
 DEVICE = get_device()
 print("Using device:", DEVICE)
-
 
 
 def create_batch_dict(input_ids: torch.Tensor):
@@ -176,8 +174,3 @@ def attack_e5_small(embeddings: torch.Tensor, reference_batch_dict: dict) -> lis
 
     predictions = tokenizer.batch_decode(seq.argmax(dim=2).tolist())
     return predictions
-
-
-if __name__ == "__main__":
-    embeddings, batch_dict = create_sample_dataset()
-    attack_e5_small(embeddings, batch_dict)
