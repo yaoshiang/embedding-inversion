@@ -1,6 +1,6 @@
 import torch
 
-from attack.trainable_token_sequence import TrainableTokenSequence  # Assuming the class is in mymodule.py
+from attack.trainable_token_sequence import PASSAGE, QUERY, TrainableTokenSequence
 
 
 def test_initialization():
@@ -10,20 +10,17 @@ def test_initialization():
     batch_size = 2
     sequence_length = 10
     vocab_size = 30000
-    model_stub = type(
-        "ModelStub",
-        (object,),
-        {"config": type("Config", (object,), {"max_position_embeddings": sequence_length, "vocab_size": vocab_size})},
-    )
+    lengths = [3, 4]
+    types = [QUERY, PASSAGE]
 
     # Act
-    trainable_tokens = TrainableTokenSequence(batch_size, sequence_length, vocab_size, 1, 0.5)
+    trainable_tokens = TrainableTokenSequence(batch_size, sequence_length, vocab_size, lengths, types, 1, 0.5)
 
-    # Assert 
-    assert trainable_tokens.token_logits.shape[0] == batch_size
-    assert trainable_tokens.token_logits.shape[1] <= sequence_length  # Layer may hard code some tokens.
-    assert trainable_tokens.token_logits.shape[2] == vocab_size
-    assert trainable_tokens.token_logits.requires_grad, "Logits must require gradients."
+    # Assert
+    assert trainable_tokens.sequences.shape[0] == batch_size
+    assert trainable_tokens.sequences.shape[1] <= sequence_length  # Layer may hard code some tokens.
+    assert trainable_tokens.sequences.shape[2] == vocab_size
+    assert trainable_tokens.sequences.requires_grad, "Logits must require gradients."
 
 
 def test_forward_pass():
@@ -33,7 +30,9 @@ def test_forward_pass():
     batch_size = 2
     sequence_length = 10
     vocab_size = 30000
-    trainable_tokens = TrainableTokenSequence(batch_size, sequence_length, vocab_size, 1, 0.5)
+    lengths = [3, 4]
+    types = [QUERY, PASSAGE]
+    trainable_tokens = TrainableTokenSequence(batch_size, sequence_length, vocab_size, lengths, types, 1, 0.5)
 
     # Act
     output = trainable_tokens.forward()
@@ -41,7 +40,7 @@ def test_forward_pass():
     # Assert
     # Check output shape and type
     assert output.shape == (batch_size, sequence_length, vocab_size)
-    
+
     sum_probs = torch.exp(output).sum(dim=-1)
     ones = torch.ones_like(sum_probs)
     assert torch.allclose(
@@ -51,17 +50,26 @@ def test_forward_pass():
 
 def test_training_update():
     """Test if gradients are computed and weights updated."""
+    # Arrange
     batch_size = 2
     sequence_length = 10
     vocab_size = 30000
-    trainable_tokens = TrainableTokenSequence(batch_size, sequence_length, vocab_size, 1, 0.5)
+    lengths = [3, 4]
+    depth = 1
+    types = [QUERY, PASSAGE]
+    trainable_tokens = TrainableTokenSequence(batch_size, sequence_length, vocab_size, lengths, types, depth, 0.5)
 
     # Dummy target for loss computation (normally this would be more complex)
     target = torch.randn(batch_size, sequence_length, vocab_size)
     criterion = torch.nn.MSELoss()
-    optimizer = torch.optim.SGD([trainable_tokens.token_logits], lr=0.1)
 
+    # Act and Assert: check params. 
+    for param, length in zip(trainable_tokens.parameters(), lengths):
+        assert param.shape == (length, vocab_size, depth)
+
+    # Act 
     # Forward pass
+    optimizer = torch.optim.SGD(trainable_tokens.parameters(), lr=0.1)
     output = trainable_tokens.forward()
     loss = criterion(output, target)
 
@@ -70,5 +78,6 @@ def test_training_update():
     loss.backward()
     optimizer.step()
 
+    # Assert
     # Check if logits were updated
-    assert torch.sum(trainable_tokens.token_logits).item() != 0, "Logits should be updated by optimizer."
+    assert torch.sum(trainable_tokens.sequences).item() != 0, "Logits should be updated by optimizer."

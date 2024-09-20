@@ -1,5 +1,13 @@
+"""A dense, soft token sequence for trainability."""
+
+from typing import Sequence
+
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
+from torch import nn
+
+QUERY = 23032
+PASSAGE = 6019
 
 
 class TrainableTokenSequence(torch.nn.Module):
@@ -14,67 +22,99 @@ class TrainableTokenSequence(torch.nn.Module):
     The final tokens, if any, are always [PAD] or 0.
     """
 
-    def __init__(self, batch_size, sequence_length, vocab_size, depth, dropout):
+    def __init__(
+        self,
+        batch_size: int,
+        max_sequence_length: int,
+        vocab_size: int,
+        lengths: Sequence[int],
+        types: Sequence[int],
+        depth: int,
+        dropout: float,
+    ):
         """Initialize the TrainableTokenSequence class.
 
-        The batch_size arg must be even. Half the batch_size is used for queries and the other half for passages.
-
+        The lengths and types are per example. Each are sequences that must be
+        the same length as batch_size. The purpose is the same as masking:
+        we want to train a sequence of a specific length per example.
 
         Args:
             batch_size (int): The batch size.
-            sequence_length (int): The sequence length.
+            max_sequence_length (int): The maximum sequence length.
             vocab_size (int): The size of the vocabulary.
+            lengths (Sequence[int]): The lengths of the sequences.
+            types (Sequence[str]): The types of the sequences.
             depth (int): The additional dimension of the token logits. This aids in stochasticity for dropout.
             dropout (float): The dropout rate.
 
         """
-        if batch_size % 2 != 0:
-            raise ValueError("batch_size must be even.")
+        if batch_size != len(lengths):
+            raise ValueError("Batch size must match the lengths.")
+        if batch_size != len(types):
+            raise ValueError("Batch size must match the types.")
+        if depth < 1:
+            raise ValueError("Depth must be at least 1.")
+        for length in lengths:
+            if length > max_sequence_length - 4:
+                raise ValueError(
+                    "Lengths must be less than or equal to the max sequence length minus 4 (CLS, QUERY/PASSAGE, :, SEP)."
+                )
 
         self.batch_size = batch_size
-        self.sequence_length = sequence_length
+        self.max_sequence_length = max_sequence_length
         self.vocab_size = vocab_size
+        self.lengths = lengths
+        self.types = types
         self.depth = depth
 
         super().__init__()
-        # self.tokens = F.one_hot(torch.arange(vocab_size)
 
-        cls = F.one_hot(torch.tensor(101), vocab_size).float().requires_grad_(True).reshape((1, 1, -1))
-        cls = torch.tile(cls, (batch_size // 2, 1, 1))
+        # Setup some one-hot tensors for the special tokens.
+        cls_ = torch.tile(F.one_hot(torch.tensor(101), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
+        query = torch.tile(F.one_hot(torch.tensor(23032), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
+        passage = torch.tile(F.one_hot(torch.tensor(6019), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
+        colon = torch.tile(F.one_hot(torch.tensor(1024), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
+        sep = torch.tile(F.one_hot(torch.tensor(102), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
+        pad = torch.tile(F.one_hot(torch.tensor(0), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
 
-        query = F.one_hot(torch.tensor(23032), vocab_size).float().requires_grad_(False).reshape((1, 1, -1))
-        query = torch.tile(query, (batch_size // 2, 1, 1))
-
-        passage = F.one_hot(torch.tensor(6019), vocab_size).float().requires_grad_(False).reshape((1, 1, -1))
-        passage = torch.tile(passage, (batch_size // 2, 1, 1))
-
-        colon = F.one_hot(torch.tensor(1024), vocab_size).float().requires_grad_(False).reshape(1, 1, -1)
-        colon = torch.tile(colon, (batch_size // 2, 1, 1))
-
-        sep = F.one_hot(torch.tensor(102), vocab_size).float().requires_grad_(False).reshape(1, 1, -1)
-        sep = torch.tile(sep, (batch_size // 2, 1, 1))
-
-        pad = F.one_hot(torch.tensor(0), vocab_size).float().requires_grad_(False).reshape(1, 1, -1)
-        pad = torch.tile(pad, (batch_size // 2, 1, 1))
-
-        # # Build the sep and pad influences.
-        # arange = torch.arange(0, sequence_length - 4).reshape(1, -1, 1)
-
-        self.register_buffer("cls", cls)
+        self.register_buffer("cls_", cls_)
         self.register_buffer("query", query)
         self.register_buffer("passage", passage)
         self.register_buffer("colon", colon)
         self.register_buffer("sep", sep)
         self.register_buffer("pad", pad)
-        # self.register_buffer('arange', arange)
 
-        shape = (batch_size, sequence_length - 5, vocab_size)
-        token_logits = torch.normal(torch.zeros(*shape + (self.depth,)), torch.ones(*shape + (self.depth,)))
-        # token_logits = torch.ones(*shape + (self.depth,))  # Final dim will be reduce summed.
-        token_logits.requires_grad_(True)
-        self.token_logits = torch.nn.Parameter(token_logits)
+        # Build the variable length trainable token logits.
+        def build_logit(length: int, vocab_size: int, depth: int) -> torch.Tensor:
+            return nn.Parameter(
+                torch.normal(torch.zeros(length, vocab_size, depth), torch.ones(length, vocab_size, depth))
+            )
 
-        # self.sep_inflection_point = torch.nn.Parameter(torch.Tensor([batch_size, 0.0]))
+        self.logits = nn.ParameterList([build_logit(length, vocab_size, depth) for length in lengths])
+
+        # Expand the logits to include the special tokens.
+        sequences = []
+        for type_, length, logits_ in zip(types, lengths, self.logits):
+            sequences.append([])
+            sequences[-1].append(cls_)
+
+            if type_ == QUERY:
+                sequences[-1].append(query)
+            elif type_ == PASSAGE:
+                sequences[-1].append(passage)
+            else:
+                raise ValueError(f"Invalid type: {type_}")
+
+            sequences[-1].append(colon)
+            sequences[-1].append(logits_)
+            sequences[-1].append(sep)
+            sequences[-1].extend([torch.tile(pad, (depth,))] * (max_sequence_length - length - 4))
+
+            sequences[-1] = torch.concat(sequences[-1], dim=0)
+            assert sequences[-1].shape == (max_sequence_length, vocab_size, depth), sequences[-1].shape
+
+        self.sequences = torch.stack(sequences, dim=0)
+        assert self.sequences.shape == (batch_size, max_sequence_length, vocab_size, depth), self.sequences.shape
 
         self.dropout = torch.nn.Dropout(p=dropout)
 
@@ -86,61 +126,15 @@ class TrainableTokenSequence(torch.nn.Module):
             containing the log-prob of the one-hot representation of
             trainable "input" tokens to a sequence model.
         """
-        # print('cls', self.cls.shape, self.cls.device)
-        # print('colon', self.colon.shape)
-        # print('token_logits', self.token_logits.shape)
-
-        queries_prefix = torch.cat(
-            [
-                self.cls,
-                self.query,
-                self.colon,
-            ],
-            dim=1,
-        )
-
-        passages_prefix = torch.cat(
-            [
-                self.cls,
-                self.passage,
-                self.colon,
-            ],
-            dim=1,
-        )
-
-        prefix = torch.cat([queries_prefix, passages_prefix], dim=0)
-
-        queries_postfix = torch.cat(
-            [
-                self.sep,
-                self.pad,
-            ],
-            dim=1,
-        )
-
-        passages_postfix = torch.cat(
-            [
-                self.sep,
-                self.pad,
-            ],
-            dim=1,
-        )
-
-        postfix = torch.cat([queries_postfix, passages_postfix], dim=0)
-
-        # print('prefix', prefix.shape, prefix.device)
-        # print('token_logits', self.token_logits.shape,
-        #       self.token_logits.device)
-
-        token_logits = self.token_logits
-
         if self.training:
-            token_logits = self.dropout(token_logits)
+            y = self.dropout(self.sequences)
+        else:
+            y = self.sequences
 
-        token_logits = torch.sum(token_logits, dim=-1)
+        y = torch.mean(y, dim=-1)
+        assert y.shape == (self.batch_size, self.max_sequence_length, self.vocab_size), y.shape
 
-        pred = torch.cat([prefix, token_logits, postfix], dim=1)
-        pred = F.log_softmax(pred, -1)
+        y = F.log_softmax(y, dim=-1)
+        assert y.shape == (self.batch_size, self.max_sequence_length, self.vocab_size), y.shape
 
-        assert pred.shape == (self.batch_size, self.sequence_length, self.vocab_size), pred.shape
-        return pred
+        return y
