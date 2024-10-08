@@ -190,20 +190,31 @@ def check_hotpotqa(ds: datasets.Dataset):
     assert sum(lengths.values()) == _VAL_ROWS  # From the paper Table 1: https://arxiv.org/pdf/1809.09600
 
 
-def create_hotpotqa_dataset_for_e5(max_examples: int) -> Tuple[torch.Tensor, Dict]:
+def create_hotpotqa_dataset_for_e5(
+    max_examples: int, max_length: int
+) -> Tuple[Tuple[int], Tuple[str], Dict, torch.Tensor]:
     """Creates an evaluation dataset based on HotPotQA.
 
+    Unfortunately, there is no easy way to tell if the tokenizer has clipped a string, or,
+    if a string was exactly 512 tokens. So we remove all strings that are 512 tokens or more tokens.
+    Note that a string has 6 tokens which always be present: [CLS], "Query", ":", "sep", ..., "sep", and "pad".
+    So the maximum length of the input sequences is 512 - 6 = 506.
+
     Args:
-        max_examples (int): The maximum number of examples to use. Improves efficiency during testing.
+        max_examples (int): The maximum number of examples to use.
+        max_length (int): The maximum length of the input sequences (in total tokens).
 
     Returns:
-        Tuple[torch.Tensor, Dict]: A tuple containing the embeddings and batch dict,
-        which are the output of the tokenizer (token_id, padding, etc).
+        texts (sequence): The texts to embed. "query: " and "passage: " prefixes are used.
+        reconstituted_texts (sequence): The texts are passed through a tokenizer and then
+            decoded back to strings.
+        batch_dict (dict): The id, mask, and type tensors.
+        embeddings (torch.Tensor): The embeddings.
     """
     if max_examples <= 0 or max_examples > _VAL_ROWS * 10:
         raise ValueError(f"max_examples must be between 1 and {_VAL_ROWS * 10}.")
 
-    ds:datasets.Dataset = datasets.load_dataset("hotpotqa/hotpot_qa", name="distractor", split="validation")
+    ds: datasets.Dataset = datasets.load_dataset("hotpotqa/hotpot_qa", name="distractor", split="validation")
     check_hotpotqa(ds)
 
     texts = []
@@ -217,15 +228,19 @@ def create_hotpotqa_dataset_for_e5(max_examples: int) -> Tuple[torch.Tensor, Dic
             texts.append(f"passage: {''.join(sentences)}")
             if len(texts) >= max_examples:
                 break
-    else: # No break
-        assert _max_examples * 8 < len(texts) < _VAL_ROWS * 10, len(texts)
+        else:  # No break, inner loop.
+            continue  # continue outer loop.
+        break  # If inner loop breaks, break outer loop too.
+
+    else:  # No break
+        assert _VAL_ROWS * 8 < len(texts) < _VAL_ROWS * 10, len(texts)
 
     model = AutoModel.from_pretrained("intfloat/e5-small")
 
-    embeddings, batch_dict = e5_utils.run_e5(model, texts)  # BSV
+    batch_dict, reconstructed_texts, embeddings = e5_utils.run_e5(model, texts)
 
     assert isinstance(embeddings, torch.Tensor)
     assert embeddings.dim() == 2, embeddings.dim()
     assert embeddings.shape[1] <= model.config.max_position_embeddings
 
-    return (embeddings, batch_dict)
+    return (tuple(texts), tuple(reconstructed_texts), batch_dict, embeddings)

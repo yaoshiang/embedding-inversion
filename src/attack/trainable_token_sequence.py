@@ -1,10 +1,10 @@
 """A dense, soft token sequence for trainability."""
 
-from typing import Sequence
+from typing import Self, Sequence
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import nn
+import transformers
 
 QUERY = 23032
 PASSAGE = 6019
@@ -48,6 +48,8 @@ class TrainableTokenSequence(torch.nn.Module):
             dropout (float): The dropout rate.
 
         """
+        raise NotImplementedError()
+
         if batch_size != len(lengths):
             raise ValueError("Batch size must match the lengths.")
         if batch_size != len(types):
@@ -70,34 +72,30 @@ class TrainableTokenSequence(torch.nn.Module):
         super().__init__()
 
         # Setup some one-hot tensors for the special tokens.
-        cls_ = torch.tile(F.one_hot(torch.tensor(101), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
-        query = torch.tile(F.one_hot(torch.tensor(23032), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
-        passage = torch.tile(F.one_hot(torch.tensor(6019), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
-        colon = torch.tile(F.one_hot(torch.tensor(1024), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
-        sep = torch.tile(F.one_hot(torch.tensor(102), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
-        pad = torch.tile(F.one_hot(torch.tensor(0), vocab_size).float().reshape((1, -1, 1)), (1, depth, 1))
-
-        self.register_buffer("cls_", cls_)
-        self.register_buffer("query", query)
-        self.register_buffer("passage", passage)
-        self.register_buffer("colon", colon)
-        self.register_buffer("sep", sep)
-        self.register_buffer("pad", pad)
+        cls_ = torch.tile(F.one_hot(torch.tensor(101), vocab_size).float().reshape((1, -1, 1)), (1, 1, depth))
+        query = torch.tile(F.one_hot(torch.tensor(23032), vocab_size).float().reshape((1, -1, 1)), (1, 1, depth))
+        passage = torch.tile(F.one_hot(torch.tensor(6019), vocab_size).float().reshape((1, -1, 1)), (1, 1, depth))
+        colon = torch.tile(F.one_hot(torch.tensor(1024), vocab_size).float().reshape((1, -1, 1)), (1, 1, depth))
+        sep = torch.tile(F.one_hot(torch.tensor(102), vocab_size).float().reshape((1, -1, 1)), (1, 1, depth))
+        pad = torch.tile(F.one_hot(torch.tensor(0), vocab_size).float().reshape((1, -1, 1)), (1, 1, depth))
 
         # Build the variable length trainable token logits.
         def build_logit(length: int, vocab_size: int, depth: int) -> torch.Tensor:
-            return nn.Parameter(
-                torch.normal(torch.zeros(length, vocab_size, depth), torch.ones(length, vocab_size, depth))
-            )
-
-        self.logits = nn.ParameterList([build_logit(length, vocab_size, depth) for length in lengths])
+            torch.normal(torch.zeros(length, vocab_size, depth), torch.ones(length, vocab_size, depth))
 
         # Expand the logits to include the special tokens.
         sequences = []
+        masks = []
         for type_, length, logits_ in zip(types, lengths, self.logits):
             sequences.append([])
+            masks.append([])
+ 
+            # Token #0
             sequences[-1].append(cls_)
+            masks.append()
+            # TODO: Continue build up the mask
 
+            # Token #1
             if type_ == QUERY:
                 sequences[-1].append(query)
             elif type_ == PASSAGE:
@@ -105,16 +103,27 @@ class TrainableTokenSequence(torch.nn.Module):
             else:
                 raise ValueError(f"Invalid type: {type_}")
 
+            # Token #2
             sequences[-1].append(colon)
+
+            # Tokens [3, 3 + length)
             sequences[-1].append(logits_)
+
+            # Token 3 + length
             sequences[-1].append(sep)
-            sequences[-1].extend([torch.tile(pad, (depth,))] * (max_sequence_length - length - 4))
+
+            # Tokens [4 + length, max_sequence_length)
+            sequences[-1].extend([pad] * (max_sequence_length - length - 4))
 
             sequences[-1] = torch.concat(sequences[-1], dim=0)
             assert sequences[-1].shape == (max_sequence_length, vocab_size, depth), sequences[-1].shape
 
-        self.sequences = torch.stack(sequences, dim=0)
-        assert self.sequences.shape == (batch_size, max_sequence_length, vocab_size, depth), self.sequences.shape
+        sequences = torch.stack(sequences, dim=0)
+        assert sequences.shape == (batch_size, max_sequence_length, vocab_size, depth), self.sequences.shape
+        self.sequences = torch.nn.Parameter(sequences)
+        assert self.sequences is not None
+
+
 
         self.dropout = torch.nn.Dropout(p=dropout)
 
@@ -126,10 +135,16 @@ class TrainableTokenSequence(torch.nn.Module):
             containing the log-prob of the one-hot representation of
             trainable "input" tokens to a sequence model.
         """
+        raise NotImplementedError
+        # TODO: Allow backprop from some of the self.sequences parameters via
+        # parameters * mask + parameters.detach() * (~mask)
+
         if self.training:
             y = self.dropout(self.sequences)
         else:
             y = self.sequences
+
+
 
         y = torch.mean(y, dim=-1)
         assert y.shape == (self.batch_size, self.max_sequence_length, self.vocab_size), y.shape
@@ -137,4 +152,48 @@ class TrainableTokenSequence(torch.nn.Module):
         y = F.log_softmax(y, dim=-1)
         assert y.shape == (self.batch_size, self.max_sequence_length, self.vocab_size), y.shape
 
+        breakpoint()
         return y
+
+    @classmethod
+    def create_for_e5(
+        cls, e5: transformers.models.bert.modeling_bert.BertModel, batch_dict: dict, depth: int, dropout: float
+    ) -> Self:
+        """Factory for e5 batch dicts.
+
+        Args:
+            e5: Instance of E5 model to grab params like max_seq_length.
+            batch_dict: tokenized sequence.
+            depth: Internal depth of logits.
+            dropout: Dropout rate.
+
+        Returns:
+            Instance of TrainableTokenSequence
+        """
+        assert "input_ids" in batch_dict
+        assert "attention_mask" in batch_dict
+        assert "token_type_ids" in batch_dict
+
+        B, S = batch_dict["input_ids"].size()
+        assert (B, S) == batch_dict["attention_mask"].size()
+        assert (B, S) == batch_dict["token_type_ids"].size()
+
+        assert torch.all(batch_dict["input_ids"][:, 0] == 101), batch_dict["input_ids"][:, 0]
+        assert torch.all((batch_dict["input_ids"][:, 1] == 23032) | (batch_dict["input_ids"][:, 1] == 6019))
+        assert torch.all(batch_dict["input_ids"][:, 2] == 1024)
+
+        assert torch.sum(batch_dict["token_type_ids"]) == 0
+
+        lengths = batch_dict["attention_mask"].sum(dim=1) - 4  # CLS, query/passage, :, SEP
+        types = batch_dict["input_ids"][:, 1]
+
+        seq_layer = TrainableTokenSequence(
+            batch_size=B,
+            max_sequence_length=e5.config.max_position_embeddings,
+            vocab_size=e5.config.vocab_size,
+            lengths=lengths,
+            types=types,
+            depth=depth,
+            dropout=dropout,
+        )
+        return seq_layer

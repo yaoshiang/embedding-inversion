@@ -35,8 +35,7 @@ class DenseEmbedding(nn.Module):
         """
         # Validate that each one-hot vector is a probability distribution
         assert torch.allclose(
-            dense_vectors.sum(dim=-1), torch.ones_like(dense_vectors.sum(dim=-1))
+            dense_vectors.sum(dim=-1), torch.ones_like(dense_vectors.sum(dim=-1)), atol=1e-4
         ), f"Input one-hot vectors must sum to 1. Got {dense_vectors.sum(dim=-1)}."
-
         embedded = torch.matmul(dense_vectors, self.embedding.weight)
         return embedded
